@@ -1,11 +1,9 @@
-
+import random
 import struct
 from sha256 import SHA256
 from toyecc import AffineCurvePoint, getcurvebyname, FieldElement,ECPrivateKey,ECPublicKey,Tools
-from toyecc.Random import secure_rand_int_between
 
-MIKRO_LICENSE_HEADER = '-----BEGIN MIKROTIK SOFTWARE KEY------------'
-MIKRO_LICENSE_FOOTER = '-----END MIKROTIK SOFTWARE KEY--------------' 
+
 MIKRO_BASE64_CHARACTER_TABLE = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 SOFTWARE_ID_CHARACTER_TABLE = b'TN0BYX18S5HZ4IA67DGF3LPCJQRUK9MW2VE'
 
@@ -40,8 +38,8 @@ def mikro_softwareid_encode(id:int)->str:
   assert(isinstance(id, int))
   ret = ''
   for i in range(8):
-    ret += chr(SOFTWARE_ID_CHARACTER_TABLE[id % 0x23])
-    id //= 0x23
+    ret += chr(SOFTWARE_ID_CHARACTER_TABLE[id % len(SOFTWARE_ID_CHARACTER_TABLE)])
+    id //= len(SOFTWARE_ID_CHARACTER_TABLE)
     if i == 3:
       ret += '-'
   return ret
@@ -168,7 +166,7 @@ def mikro_kcdsa_sign(data:bytes,private_key:bytes)->bytes:
     private_key:ECPrivateKey = ECPrivateKey(Tools.bytestoint_le(private_key), curve)
     public_key:ECPublicKey = private_key.pubkey
     while True:
-        nonce_secret = secure_rand_int_between(1, curve.n - 1)
+        nonce_secret = random.SystemRandom().randint(1, curve.n - 1)
         nonce_point = nonce_secret * curve.G
         nonce = int(nonce_point.x) % curve.n
         nonce_hash = mikro_sha256(Tools.inttobytes_le(nonce,32))
@@ -192,20 +190,16 @@ def mikro_kcdsa_verify(data:bytes, signature:bytes, public_key:bytes)->bool:
     #y^2 = x^3 + ax^2 + x
     x = FieldElement(Tools.bytestoint_le(public_key), curve.p)
     YY = ((x**3) + (curve.a * x**2) + x).sqrt()
-    public_keys = []
-    for y in YY:
-        public_keys += [AffineCurvePoint(int(x), int(y), curve)]
-
+    public_keys = [AffineCurvePoint(int(x), int(y), curve) for y in YY]
     data_hash = bytearray(mikro_sha256(data))
     nonce_hash = signature[:16]
-    signature = signature[16:]
+    signature = Tools.bytestoint_le(signature[16:])
     for i in range(16):
         data_hash[8+i] ^= nonce_hash[i]
     data_hash[0] &= 0xF8
     data_hash[31] &= 0x7F
     data_hash[31] |= 0x40
     data_hash = Tools.bytestoint_le(data_hash)
-    signature = Tools.bytestoint_le(signature)
     for public_key in public_keys:
         nonce = int((public_key * signature + curve.G * data_hash).x) 
         if mikro_sha256(Tools.inttobytes_le(nonce,32))[:len(nonce_hash)] == nonce_hash:
